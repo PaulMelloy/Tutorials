@@ -1,0 +1,78 @@
+---
+title: "Bayesian Models in R"
+author: "P. Melloy"
+date: "03/07/2019"
+output: html_document
+---
+
+This report shows the steps I followed while reading the blog post "Bayesian Models in R" written Francisco Lima by on May 1, 2019.
+
+[Bayesian Models in R](https://www.r-bloggers.com/bayesian-models-in-r-2/)
+
+This tutorial works through examples using the `greta` and `rethinking` packages. which require other packages not mentioned in the blog.
+
+To follow the code properly `stan` and other packages need installing. See the authors github repository [cuckooParasitism](https://github.com/monogenea/cuckooParasitism)
+
+
+```{r}
+install.packages("rethinking")
+# install.packages("greta")
+
+library(rethinking)
+library(tidyverse)
+library(magrittr)
+library(readxl)
+ 
+setwd("./Bayesian_in_R_bloggers")
+
+# Download data set from Riehl et al. 2019
+dataURL <- "https://datadryad.org/bitstream/handle/10255/dryad.204922/Riehl%20and%20Strong_Social%20Parasitism%20Data_2007-2017_DRYAD.xlsx"
+download.file(dataURL, destfile = "data.xlsx")
+
+dnorm(0,3)
+
+```
+Load the relevant tab from the spreadsheet (“Female Reproductive Output”) and discard records with missing counts in Eggs_fledged. You should have a total of 575 records. The remaining missing values will be imputed by the model. Then, re-encode Female_ID_coded, Group_ID_coded and Year. This is because grouping factors must be numbered in order to incorporate varying intercepts with rethinking. This will help us rule out systematic differences among females, groups and years from the main effects. Finally, add the standardised versions of Min_age, Group_size and Mean_eggsize to the dataset.
+
+```{r}
+(allTabs <- excel_sheets("data.xlsx")) # list tabs
+ 
+# Read female reproductive output
+fro %
+as.data.frame()
+ 
+fro %% mutate(female_id = as.integer(factor(Female_ID_coded)),
+year_id = as.integer(factor(Year)),
+group_id = as.integer(factor(Group_ID_coded)),
+Min_age_Z = scale(Min_age),
+Group_size_Z = scale(Group_size),
+Mean_eggsize_Z = scale(Mean_eggsize))
+```
+
+
+In terms of code, this is how it looks like. The HMC will be run using 5,000 iterations, 1,000 of which for warmup, with four independent chains, each with its own CPU core. Finally, the precis call shows the 95% highest-density probability interval (HPDI) of all marginal posterior distributions. You can visualise these using plot(precis(...)).
+
+```{r}
+
+eggsFMod <- map2stan(alist(
+   Eggs_fledged ~ dzipois(p, lambda),
+   logit(p) <- ap,
+   log(lambda) <- a + a_fem[female_id] + a_year[year_id] + a_group[group_id] + 
+      Parasite*bP + Min_age_Z*bA + Group_size_Z*bGS + Mean_eggsize_Z*bES +
+      Parasite*Min_age_Z*bPA,
+   Group_size_Z ~ dnorm(0, 3),
+   Mean_eggsize_Z ~ dnorm(0, 3),
+   a_fem[female_id] ~ dnorm(0, sigma1),
+   a_year[year_id] ~ dnorm(0, sigma2),
+   a_group[group_id] ~ dnorm(0, sigma3),
+   c(sigma1, sigma2, sigma3) ~ dcauchy(0, 1),
+   c(ap, a) ~ dnorm(0, 3),
+   c(bP, bA, bGS, bES, bPA) ~ dnorm(0, 2)),
+   data = fro,
+   iter = 5e3, warmup = 1e3, chains = 4, cores = 4)
+ 
+# Check posterior dists
+precis(eggsFMod, prob = .95) # use depth = 2 for varying intercepts
+
+```
+
